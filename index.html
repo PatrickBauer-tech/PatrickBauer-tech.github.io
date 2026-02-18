@@ -1,29 +1,53 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Lake Ontelaunee Algae Counts</title>
+  <meta charset="utf-8" />
+  <title>Lake Ontelaunee Algae Monitoring Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
 
-  <!-- Chart.js -->
+  <!-- Styles -->
+  <link rel="stylesheet" href="styles.css" />
+
+  <!-- Chart.js (for charts) -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
-  <!-- SheetJS (Excel reader) -->
-  <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
-
-  <link rel="stylesheet" href="styles.css">
+  <!-- SheetJS (to read Excel in the browser) -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
-
 <body>
   <h1>Lake Ontelaunee Algae Monitoring Dashboard</h1>
+  <p>Data automatically loads from <code>algae_data.xlsx</code>.</p>
 
-  <p>Data automatically loads from algae_data.xlsx.</p>
+  <div id="status" class="status">Loading…</div>
 
-  <h2>Data Table</h2>
-  <div id="table-container"></div>
+  <section class="controls">
+    <label>
+      Site / Depth:
+      <select id="siteSelect"></select>
+    </label>
+    <label>
+      Metric:
+      <select id="metricSelect">
+        <option value="Cells_per_mL">Cells per mL</option>
+        <option value="NU_per_mL">NU per mL</option>
+        <option value="Biovolume">Biovolume (µm³/mL)</option>
+      </select>
+    </label>
+    <label>
+      (Optional) Genus filter:
+      <input id="genusFilter" placeholder="e.g., Cyclotella">
+    </label>
+    <button id="applyBtn">Apply</button>
+  </section>
 
   <h2>Cells per mL by Sample Date</h2>
-  <canvas id="cellsChart"></canvas>
+  <canvas id="cellsChart" height="120"></canvas>
 
-  <script src="script.js"></script>
+  <h2>Full Data Table</h2>
+  <div id="table-container"></div>
+
+  <!-- App script (loads after libraries) -->
+  <script src="script.js" defer></script>
 </body>
 </html>
+``
