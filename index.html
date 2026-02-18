@@ -4,6 +4,8 @@
   <meta charset="utf-8" />
   <title>Lake Ontelaunee Algae Monitoring Dashboard</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <!-- Styles -->
   <link rel="stylesheet" href="styles.css" />
 
   <!-- Chart.js (for charts) -->
@@ -20,7 +22,7 @@
 
   <section class="controls">
     <label>
-      Site / Depth:
+      Site / Location:
       <select id="siteSelect"></select>
     </label>
     <label>
@@ -28,22 +30,23 @@
       <select id="metricSelect">
         <option value="Cells_per_mL">Cells per mL</option>
         <option value="NU_per_mL">NU per mL</option>
-        <option value="Biovolume">Biovolume (µm³/mL)</option>
+        <option value="Biovolume per Cubic Micrometer (µm³/mL)">Biovolume (µm³/mL)</option>
       </select>
     </label>
     <label>
       (Optional) Genus filter:
-      <input id="genusFilter" placeholder="e.g., Cyclotella">
+      <input id="genusFilter" placeholder="e.g., Cyclotella" />
     </label>
     <button id="applyBtn">Apply</button>
   </section>
 
-  <h2>Cells per mL by Sample Date</h2>
+  <h2>Metric by Sample Date</h2>
   <canvas id="cellsChart" height="120"></canvas>
 
   <h2>Full Data Table</h2>
   <div id="table-container"></div>
 
+  <!-- App code -->
   <script src="script.js"></script>
 </body>
 </html>
