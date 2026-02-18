@@ -10,7 +10,7 @@ const setStatus = (msg, isError=false) => {
 function toDate(d) {
   if (d instanceof Date) return d;
   if (typeof d === "number" && isFinite(d)) {
-    // Excel serial date → JS Date (UTC)
+    // Excel serial date → JS Date (UTC base)
     const epoch = new Date(Date.UTC(1899, 11, 30));
     return new Date(epoch.getTime() + d * 86400000);
   }
@@ -20,11 +20,11 @@ function toDate(d) {
   return isNaN(dt) ? null : dt;
 }
 
-// Format date (change to US style below if you prefer)
+// ISO yyyy-mm-dd; change to US format in the commented block below if you prefer.
 const fmt = (d) => d ? d.toISOString().slice(0,10) : "";
 
 /*
-// US style:
+// US style (MM/DD/YYYY):
 // const fmt = (d) => {
 //   if (!d) return "";
 //   const mm = String(d.getMonth() + 1).padStart(2, "0");
@@ -34,16 +34,32 @@ const fmt = (d) => d ? d.toISOString().slice(0,10) : "";
 // };
 */
 
-// Find a key in a header list by pattern (ignore spaces/underscores)
+function normalize(s) { return String(s || "").toLowerCase().replace(/\s+|_+/g, ""); }
+
+// Try to find a header key by patterns (returns the original header text)
 function findKey(keys, patterns) {
-  const norm = (s) => String(s || "").toLowerCase().replace(/\s+|_+/g, "");
-  const nk = keys.map(k => ({ k, n: norm(k) }));
+  const nk = keys.map(k => ({ k, n: normalize(k) }));
   for (const pat of patterns) {
     const re = new RegExp(pat, "i");
-    for (const {k, n} of nk) if (re.test(n)) return k; // normalized match
-    for (const k of keys) if (re.test(k)) return k;    // raw contains
+    for (const {k, n} of nk) if (re.test(n)) return k; // normalized
+    for (const {k} of nk) if (re.test(k)) return k;    // raw contains
   }
   return null;
+}
+
+// Generate a placeholder header for blank cells (e.g., COL_A, COL_B, …)
+function placeholderName(i) {
+  // A, B, C… Z, AA, AB…
+  const letters = (() => {
+    let n = i, s = "";
+    while (true) {
+      s = String.fromCharCode(65 + (n % 26)) + s;
+      n = Math.floor(n / 26) - 1;
+      if (n < 0) break;
+    }
+    return s;
+  })();
+  return `COL_${letters}`;
 }
 
 /***** Load Excel and robustly detect the header row *****/
@@ -60,57 +76,90 @@ async function loadExcelRows() {
   const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
   if (!rows.length) return [];
 
-  // Skip the title/blank rows and detect the true header line:
-  // require a row containing Date + Taxon + Cells per mL and enough non-empty cells
-  // (matches your workbook's header names like Date_sampled, BioDataTaxonName, Cells_per_mL, long Biovolume name, etc.). [1](https://readingareawater-my.sharepoint.com/personal/patrick_bauer_readingareawater_com/_layouts/15/Doc.aspx?sourcedoc=%7B255A45EB-1E69-4B48-9806-49E457349B26%7D&file=algae_data.xlsx&action=default&mobileredirect=true)
-  const headerRowIdx = rows.findIndex(r => {
-    if (!r) return false;
-    const cells = r.map(c => (c ?? "").toString().toLowerCase());
-    const hasDate  = cells.some(c => /date/.test(c));
-    const hasTaxon = cells.some(c => /(biodatataxonname|scientific|taxon)/.test(c));
-    const hasCells = cells.some(c => /cells\s*per\s*ml|cellsperml/.test(c));
-    const nonEmpty = cells.filter(c => c.trim() !== "").length;
-    return hasDate && hasTaxon && hasCells && nonEmpty >= 6;
+  // Score each row for header-likeness using your known columns.
+  // Your sheet uses names like: Date_sampled, BioDataTaxonName, Cells_per_mL,
+  // NU_per_mL, "Biovolume per Cubic Micrometer (µm³/mL)", PHYLUM, CLASS, ORDER,
+  // FAMILY, GENUS, and site/depth fields ("Top", "Middle", "Bottom", "Site 2 T/B", etc.). [1](https://readingareawater-my.sharepoint.com/personal/patrick_bauer_readingareawater_com/_layouts/15/Doc.aspx?sourcedoc=%7B255A45EB-1E69-4B48-9806-49E457349B26%7D&file=algae_data.xlsx&action=default&mobileredirect=true)
+  const headerPatterns = [
+    "date", "biodatataxonname", "scientific", "taxon",
+    "cellsperml", "nuperml", "biovolume",
+    "^phylum$", "^class$", "^order$", "^family$", "^genus$",
+    "normalizedsite", "site", "location", "depth",
+    "algalgroup", "project", "lab"
+  ];
+  function rowScore(arr) {
+    const cells = (arr || []).map(c => normalize(c));
+    let score = 0;
+    for (const c of cells) {
+      for (const pat of headerPatterns) {
+        if (new RegExp(pat, "i").test(c)) { score++; break; }
+      }
+    }
+    return score;
+  }
+
+  // Pick the row with the highest score; require a minimum to avoid data rows.
+  let bestIdx = -1, bestScore = -1;
+  rows.forEach((r, i) => {
+    const s = rowScore(r);
+    if (s > bestScore) { bestScore = s; bestIdx = i; }
   });
 
-  if (headerRowIdx < 0) {
+  if (bestIdx < 0 || bestScore < 5) {
     throw new Error("Could not locate the header row in the Excel sheet.");
   }
 
-  // Build the header from that row
-  const header = (rows[headerRowIdx] || []).map(h => (h ?? "").toString().trim());
+  // Build a clean header: trim, and fill blanks with unique placeholders
+  const rawHeader = rows[bestIdx] || [];
+  const header = rawHeader.map((h, i) => {
+    const name = (h ?? "").toString().trim();
+    return name ? name : placeholderName(i);
+  });
 
-  // Build data objects from subsequent rows, skipping fully empty ones
-  const dataRows = rows.slice(headerRowIdx + 1);
+  // Ensure headers are unique (avoid collisions)
+  const seen = new Set();
+  for (let i = 0; i < header.length; i++) {
+    let name = header[i];
+    let j = 1;
+    while (seen.has(name)) {
+      name = `${header[i]}_${++j}`;
+    }
+    header[i] = name;
+    seen.add(name);
+  }
+
+  // Build data objects from subsequent rows; initialize each object with ALL headers
+  const dataRows = rows.slice(bestIdx + 1);
   const objects = dataRows
     .filter(r => r && r.some(cell => cell !== null && cell !== "")) // keep rows with any content
     .map(r => {
       const obj = {};
-      header.forEach((h, i) => { obj[h] = r[i]; });
+      header.forEach(h => { obj[h] = null; });          // initialize all keys
+      header.forEach((h, i) => { obj[h] = r[i] ?? null; }); // fill present cells
       return obj;
     });
 
-  return objects;
+  return { header, rows: objects };
 }
 
 /***** Table (dates formatted; blanks handled) *****/
 function buildTable(data, options = {}) {
-  if (!data.length) { $("#table-container").innerHTML = "<p>No rows.</p>"; return; }
+  if (!data.rows.length) { $("#table-container").innerHTML = "<p>No rows.</p>"; return; }
 
-  const { dateKey } = options; // detected date header name
-  const keys = Object.keys(data[0]);
+  const { header } = data;
+  const dateColumns = header.filter(h => /date/i.test(h)); // any header containing "date"
 
   let html = '<div class="table-wrap"><table><thead><tr>';
-  keys.forEach(k => html += `<th>${k}</th>`);
+  header.forEach(k => html += `<th>${k}</th>`);
   html += '</tr></thead><tbody>';
 
-  data.forEach(row => {
+  data.rows.forEach(row => {
     html += "<tr>";
-    keys.forEach(k => {
+    header.forEach(k => {
       let val = row[k];
 
-      // Date column → format (also converts Excel serials)
-      if (dateKey && k === dateKey) {
+      // Format any header that looks like a date column
+      if (dateColumns.includes(k)) {
         const d = toDate(val);
         val = d ? fmt(d) : (val ?? "");
       }
@@ -131,8 +180,8 @@ function buildTable(data, options = {}) {
 /***** Chart *****/
 let chart;
 function buildChart(data, siteKey, dateKey, metricKey, genusKey, selectedSite, selectedMetric, genusFilter) {
-  // Filter by selected site/depth (e.g., "Top", "Site 2 B", etc.) from your data. [1](https://readingareawater-my.sharepoint.com/personal/patrick_bauer_readingareawater_com/_layouts/15/Doc.aspx?sourcedoc=%7B255A45EB-1E69-4B48-9806-49E457349B26%7D&file=algae_data.xlsx&action=default&mobileredirect=true)
-  let filtered = data.filter(r => (r[siteKey] || "").toString().trim() === selectedSite);
+  // Filter by selected site/depth (e.g., "Top", "Site 2 B", etc.). [1](https://readingareawater-my.sharepoint.com/personal/patrick_bauer_readingareawater_com/_layouts/15/Doc.aspx?sourcedoc=%7B255A45EB-1E69-4B48-9806-49E457349B26%7D&file=algae_data.xlsx&action=default&mobileredirect=true)
+  let filtered = data.rows.filter(r => (r[siteKey] || "").toString().trim() === selectedSite);
 
   // Optional genus filter (contains, case-insensitive)
   if (genusFilter) {
@@ -186,34 +235,42 @@ function buildChart(data, siteKey, dateKey, metricKey, genusKey, selectedSite, s
 (async function main() {
   try {
     setStatus("Loading Excel…");
-    const raw = await loadExcelRows();
-    if (!raw.length) { setStatus("No data rows found in algae_data.xlsx.", true); return; }
+    const loaded = await loadExcelRows();
+    if (!loaded.rows.length) {
+      setStatus("No data rows found in algae_data.xlsx.", true);
+      return;
+    }
 
     setStatus("Mapping columns…");
-    const keys = Object.keys(raw[0]);
+    const header = loaded.header;
 
-    // Detect column names from your sheet (flexible to slight header name differences). [1](https://readingareawater-my.sharepoint.com/personal/patrick_bauer_readingareawater_com/_layouts/15/Doc.aspx?sourcedoc=%7B255A45EB-1E69-4B48-9806-49E457349B26%7D&file=algae_data.xlsx&action=default&mobileredirect=true)
-    const dateKey   = findKey(keys, ["^date.?sampled$", "date"]);
-    const taxonKey  = findKey(keys, ["^biodatataxonname$", "scientific", "taxon"]);
-    const cellsKey  = findKey(keys, ["^cells.?per.?ml$"]);
-    const nuKey     = findKey(keys, ["^nu.?per.?ml$"]);
-    const bioKey    = findKey(keys, ["biovolume"]); // matches "Biovolume per Cubic Micrometer (µm³/mL)"
-    const siteKey   = findKey(keys, ["^normalizedsite$", "site", "location", "depth"]);
-    const genusKey  = findKey(keys, ["^genus$"]);
+    // Detect column names from your sheet (flexible). [1](https://readingareawater-my.sharepoint.com/personal/patrick_bauer_readingareawater_com/_layouts/15/Doc.aspx?sourcedoc=%7B255A45EB-1E69-4B48-9806-49E457349B26%7D&file=algae_data.xlsx&action=default&mobileredirect=true)
+    const dateKey   = findKey(header, ["^date.?sampled$", "date"]);
+    const taxonKey  = findKey(header, ["^biodatataxonname$", "scientific", "taxon"]);
+    const cellsKey  = findKey(header, ["^cells.?per.?ml$"]);
+    const nuKey     = findKey(header, ["^nu.?per.?ml$"]);
+    const bioKey    = findKey(header, ["biovolume"]); // matches the long Biovolume header
+    const siteKey   = findKey(header, ["^normalizedsite$", "site", "location", "depth"]);
+    const genusKey  = findKey(header, ["^genus$"]);
 
     if (!dateKey || !taxonKey || !cellsKey || !siteKey) {
       throw new Error("Missing required columns (need at least Date, Taxon, Cells_per_mL, Site).");
     }
 
-    // Normalize a "Biovolume" property for UI use
-    const data = raw.map(r => {
-      const obj = { ...r };
-      if (bioKey && !obj.Biovolume) obj.Biovolume = obj[bioKey];
-      return obj;
-    });
+    // Normalize a "Biovolume" property for UI use (non-destructive)
+    const data = {
+      header,
+      rows: loaded.rows.map(r => {
+        const obj = { ...r };
+        if (bioKey && obj.Biovolume == null) obj.Biovolume = obj[bioKey];
+        return obj;
+      })
+    };
 
     // Populate site selector
-    const sites = Array.from(new Set(data.map(r => (r[siteKey] || "").toString().trim()).filter(Boolean))).sort();
+    const sites = Array.from(new Set(data.rows
+      .map(r => (r[siteKey] || "").toString().trim())
+      .filter(Boolean))).sort();
     const siteSel = $("#siteSelect");
     siteSel.innerHTML = sites.map(s => `<option>${s}</option>`).join("");
 
@@ -224,7 +281,7 @@ function buildChart(data, siteKey, dateKey, metricKey, genusKey, selectedSite, s
 
     // Initial chart/table
     buildChart(data, siteKey, dateKey, cellsKey, genusKey, sites[0], "Cells_per_mL", "");
-    buildTable(data, { dateKey });   // ← passes dateKey so table formats dates
+    buildTable(data, { /* formats any 'date' headers automatically */ });
 
     setStatus("Loaded ✔");
 
@@ -247,3 +304,4 @@ function buildChart(data, siteKey, dateKey, metricKey, genusKey, selectedSite, s
     setStatus(`Error: ${err.message}`, true);
   }
 })();
+``
