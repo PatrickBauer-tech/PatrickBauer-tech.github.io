@@ -1,10 +1,29 @@
 <!DOCTYPE html>
 <html>
-  <head>
-    <title>My First Webpage</title>
-  </head>
-  <body>
-    <h1>Hello World!</h1>
-    <p>This is my first webpage on GitHub Pages.</p>
-  </body>
+<head>
+  <meta charset="UTF-8">
+  <title>Lake Ontelaunee Algae Counts</title>
+
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <!-- SheetJS (Excel reader) -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+
+  <link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+  <h1>Lake Ontelaunee Algae Monitoring Dashboard</h1>
+
+  <p>Data automatically loads from algae_data.xlsx.</p>
+
+  <h2>Data Table</h2>
+  <div id="table-container"></div>
+
+  <h2>Cells per mL by Sample Date</h2>
+  <canvas id="cellsChart"></canvas>
+
+  <script src="script.js"></script>
+</body>
 </html>
